@@ -4,7 +4,6 @@ import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { DndProvider, useDrag, useDrop } from 'react-dnd'
 import { HTML5Backend } from 'react-dnd-html5-backend'
 import { Plus, Edit2, Trash2, Eye, FileText, Printer, Calendar, X } from 'lucide-react'
-import Image from 'next/image'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -16,23 +15,6 @@ import { format, parse, startOfWeek, getDay } from "date-fns"
 import { de } from "date-fns/locale"
 import { Calendar as BigCalendar, dateFnsLocalizer, View } from 'react-big-calendar'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
-import { sql } from '@vercel/postgres'
-import { put } from '@vercel/blob'
-
-
-console.log("POSTGRES_URL:", process.env.POSTGRES_URL);
-
-// Stellen Sie sicher, dass dieser Code in einer asynchronen Funktion ausgeführt wird
-async function testDatabaseConnection() {
-  try {
-    const result = await sql`SELECT NOW()`;
-    console.log("Datenbankverbindung erfolgreich:", result);
-  } catch (error) {
-    console.error("Fehler bei der Datenbankverbindung:", error);
-  }
-}
-
-testDatabaseConnection();
 
 const localizer = dateFnsLocalizer({
   format,
@@ -52,7 +34,7 @@ type Comment = {
 }
 
 type Auftrag = {
-  id: number
+  _id: string
   nummer: string
   kunde: string
   adresse: string
@@ -72,7 +54,7 @@ type KachelProps = {
   title: string
   auftraege: Auftrag[]
   onEdit: (auftrag: Auftrag) => void
-  onDelete: (id: number) => void
+  onDelete: (id: string) => void
   onDrop: (item: Auftrag, targetStatus: string) => void
   onView: (auftrag: Auftrag) => void
 }
@@ -116,7 +98,7 @@ const getKachelColor = (title: string) => {
 const DraggableAuftrag: React.FC<{ 
   auftrag: Auftrag; 
   onEdit: (auftrag: Auftrag) => void; 
-  onDelete: (id: number) => void;
+  onDelete: (id: string) => void;
   onView: (auftrag: Auftrag) => void;
 }> = ({ auftrag, onEdit, onDelete, onView }) => {
   const [{ isDragging }, drag] = useDrag(() => ({
@@ -140,7 +122,7 @@ const DraggableAuftrag: React.FC<{
           <Button variant="outline" size="icon" onClick={() => onEdit(auftrag)}>
             <Edit2 className="h-4 w-4" />
           </Button>
-          <Button variant="outline" size="icon" onClick={() => onDelete(auftrag.id)}>
+          <Button variant="outline" size="icon" onClick={() => onDelete(auftrag._id)}>
             <Trash2 className="h-4 w-4" />
           </Button>
         </div>
@@ -168,7 +150,7 @@ const Kachel: React.FC<KachelProps> = ({ title, auftraege, onEdit, onDelete, onD
       <CardContent className="flex-grow overflow-y-auto">
         {auftraege.map((auftrag) => (
           <DraggableAuftrag 
-            key={auftrag.id} 
+            key={auftrag._id} 
             auftrag={auftrag} 
             onEdit={onEdit} 
             onDelete={onDelete} 
@@ -224,8 +206,8 @@ const PrintableAuftrag: React.FC<{ auftrag: Auftrag }> = ({ auftrag }) => {
 
 const CommentSection: React.FC<{ 
   auftrag: Auftrag; 
-  onAddComment: (auftragId: number, comment: Omit<Comment, 'id' | 'createdAt'>) => void;
-  onSetTermin: (auftragId: number, termin: Date | undefined) => void;
+  onAddComment: (auftragId: string, comment: Omit<Comment, 'id' | 'createdAt'>) => void;
+  onSetTermin: (auftragId: string, termin: Date | undefined) => void;
 }> = ({ auftrag, onAddComment, onSetTermin }) => {
   const [newComment, setNewComment] = useState({ author: '', text: '' })
   const [newTermin, setNewTermin] = useState<string>('')
@@ -233,11 +215,11 @@ const CommentSection: React.FC<{
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (newComment.author.trim() && newComment.text.trim()) {
-      onAddComment(auftrag.id, newComment)
+      onAddComment(auftrag._id, newComment)
       setNewComment({ author: '', text: '' })
     }
     if (newTermin) {
-      onSetTermin(auftrag.id, new Date(newTermin))
+      onSetTermin(auftrag._id, new Date(newTermin))
       setNewTermin('')
     }
   }
@@ -281,7 +263,7 @@ const CommentSection: React.FC<{
 const Auftragsverwaltung: React.FC = () => {
   const [auftraege, setAuftraege] = useState<Auftrag[]>([])
   const [kacheln] = useState(['Offen', 'In Bearbeitung', 'Termin', 'Nochmal vorbeigehen', 'Erledigt', 'Rechnung'])
-  const [neuerAuftrag, setNeuerAuftrag] = useState<Omit<Auftrag, 'id' | 'status' | 'nummer' | 'erstelltAm' | 'comments'>>({
+  const [neuerAuftrag, setNeuerAuftrag] = useState<Omit<Auftrag, '_id' | 'status' | 'nummer' | 'erstelltAm' | 'comments'>>({
     kunde: '', adresse: '', mieter: '', telNr: '', email: '', problem: '', pdfFiles: [], importance: 'Normal'
   })
   const [bearbeiteterAuftrag, setBearbeiteterAuftrag] = useState<Auftrag | null>(null)
@@ -294,45 +276,17 @@ const Auftragsverwaltung: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>('month')
   const printRef = useRef<HTMLDivElement>(null)
 
-  const testDatabaseConnection = async () => {
-    try {
-      const result = await sql`SELECT NOW()`;
-      console.log("Datenbankverbindung erfolgreich:", result);
-    } catch (error) {
-      console.error("Fehler bei der Datenbankverbindung:", error);
-    }
-  };
-
-  const checkTableStructure = async () => {
-    try {
-      const result = await sql`
-        SELECT column_name, data_type 
-        FROM information_schema.columns 
-        WHERE table_name = 'auftraege'
-      `;
-      console.log("Tabellenstruktur:", result);
-    } catch (error) {
-      console.error("Fehler beim Überprüfen der Tabellenstruktur:", error);
-    }
-  };
-
   useEffect(() => {
     const fetchAuftraege = async () => {
       try {
-        const { rows } = await sql`SELECT * FROM auftraege`
-        const auftraegeWithDates = rows.map(auftrag => ({
-          ...auftrag,
-          erstelltAm: new Date(auftrag.erstelltAm),
-          termin: auftrag.termin ? new Date(auftrag.termin) : undefined
-        }))
-        setAuftraege(auftraegeWithDates as Auftrag[])
+        const response = await fetch('/api/auftraege')
+        const data = await response.json()
+        setAuftraege(data)
       } catch (error) {
         console.error('Fehler beim Abrufen der Aufträge:', error)
       }
     }
     fetchAuftraege()
-    testDatabaseConnection()
-    checkTableStructure()
   }, [])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -357,8 +311,14 @@ const Auftragsverwaltung: React.FC = () => {
     if (files.length > 0) {
       const uploadedFiles = await Promise.all(files.map(async (file) => {
         try {
-          const { url } = await put(`auftraege/${file.name}`, file, { access: 'public' })
-          return url
+          const formData = new FormData()
+          formData.append('file', file)
+          const response = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData,
+          })
+          const data = await response.json()
+          return data.url
         } catch (error) {
           console.error('Fehler beim Hochladen der Datei:', error)
           return null
@@ -374,54 +334,33 @@ const Auftragsverwaltung: React.FC = () => {
   }
 
   const handleSubmit = useCallback(async () => {
-    console.log("handleSubmit wurde aufgerufen");
-    console.log("Umgebungsvariablen:", process.env);
     try {
       if (bearbeiteterAuftrag) {
-        console.log("Bearbeite existierenden Auftrag:", bearbeiteterAuftrag);
-        await sql`
-          UPDATE auftraege
-          SET kunde = ${bearbeiteterAuftrag.kunde},
-              adresse = ${bearbeiteterAuftrag.adresse},
-              mieter = ${bearbeiteterAuftrag.mieter},
-              telNr = ${bearbeiteterAuftrag.telNr},
-              email = ${bearbeiteterAuftrag.email},
-              problem = ${bearbeiteterAuftrag.problem},
-              pdfFiles = ${JSON.stringify(bearbeiteterAuftrag.pdfFiles)},
-              status = ${bearbeiteterAuftrag.status},
-              importance = ${bearbeiteterAuftrag.importance},
-              termin = ${bearbeiteterAuftrag.termin ? bearbeiteterAuftrag.termin.toISOString() : null}
-          WHERE id = ${bearbeiteterAuftrag.id}
-        `
+        const response = await fetch(`/api/auftraege/${bearbeiteterAuftrag._id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(bearbeiteterAuftrag),
+        })
+        const updatedAuftrag = await response.json()
         setAuftraege(prevAuftraege => 
-          prevAuftraege.map(a => a.id === bearbeiteterAuftrag.id ? bearbeiteterAuftrag : a)
+          prevAuftraege.map(a => a._id === updatedAuftrag._id ? updatedAuftrag : a)
         )
       } else {
-        console.log("Füge neuen Auftrag hinzu:", neuerAuftrag);
-        const { rows } = await sql`
-          INSERT INTO auftraege (
-            nummer, kunde, adresse, mieter, telNr, email, problem, pdfFiles, status, erstelltAm, importance
-          ) VALUES (
-            ${nextAuftragNummer.toString().padStart(4, '0')},
-            ${neuerAuftrag.kunde},
-            ${neuerAuftrag.adresse},
-            ${neuerAuftrag.mieter},
-            ${neuerAuftrag.telNr},
-            ${neuerAuftrag.email},
-            ${neuerAuftrag.problem},
-            ${JSON.stringify(neuerAuftrag.pdfFiles)},
-            'Offen',
-            ${new Date().toISOString()},
-            ${neuerAuftrag.importance}
-          )
-          RETURNING *
-        `
-        console.log("SQL-Abfrage erfolgreich ausgeführt, Ergebnis:", rows);
-        const newAuftrag = {
-          ...rows[0],
-          erstelltAm: new Date(rows[0].erstelltAm),
-          termin: rows[0].termin ? new Date(rows[0].termin) : undefined
-        } as Auftrag
+        const response = await fetch('/api/auftraege', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ...neuerAuftrag,
+            nummer: nextAuftragNummer.toString().padStart(4, '0'),
+            status: 'Offen',
+            erstelltAm: new Date(),
+          }),
+        })
+        const newAuftrag = await response.json()
         setAuftraege(prevAuftraege => [...prevAuftraege, newAuftrag])
         setNextAuftragNummer(prev => prev + 1)
       }
@@ -429,11 +368,7 @@ const Auftragsverwaltung: React.FC = () => {
       setNeuerAuftrag({ kunde: '', adresse: '', mieter: '', telNr: '', email: '', problem: '', pdfFiles: [], importance: 'Normal' })
       setBearbeiteterAuftrag(null)
     } catch (error) {
-      console.error('Detaillierter Fehler beim Speichern des Auftrags:', error);
-      if (error instanceof Error) {
-        console.error('Fehlermeldung:', error.message);
-        console.error('Stacktrace:', error.stack);
-      }
+      console.error('Fehler beim Speichern des Auftrags:', error)
     }
   }, [bearbeiteterAuftrag, neuerAuftrag, nextAuftragNummer])
 
@@ -442,10 +377,10 @@ const Auftragsverwaltung: React.FC = () => {
     setIsDialogOpen(true)
   }, [])
 
-  const handleDelete = useCallback(async (id: number) => {
+  const handleDelete = useCallback(async (id: string) => {
     try {
-      await sql`DELETE FROM auftraege WHERE id = ${id}`
-      setAuftraege(prevAuftraege => prevAuftraege.filter(a => a.id !== id))
+      await fetch(`/api/auftraege/${id}`, { method: 'DELETE' })
+      setAuftraege(prevAuftraege => prevAuftraege.filter(a => a._id !== id))
     } catch (error) {
       console.error('Fehler beim Löschen des Auftrags:', error)
     }
@@ -453,10 +388,17 @@ const Auftragsverwaltung: React.FC = () => {
 
   const handleDrop = useCallback(async (item: Auftrag, targetStatus: string) => {
     try {
-      await sql`UPDATE auftraege SET status = ${targetStatus} WHERE id = ${item.id}`
+      const response = await fetch(`/api/auftraege/${item._id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ...item, status: targetStatus }),
+      })
+      const updatedAuftrag = await response.json()
       setAuftraege(prevAuftraege => 
         prevAuftraege.map(a => 
-          a.id === item.id ? { ...a, status: targetStatus } : a
+          a._id === updatedAuftrag._id ? updatedAuftrag : a
         )
       )
     } catch (error) {
@@ -469,28 +411,19 @@ const Auftragsverwaltung: React.FC = () => {
     setIsViewDialogOpen(true)
   }, [])
 
-  const handleAddComment = useCallback(async (auftragId: number, comment: Omit<Comment, 'id' | 'createdAt'>) => {
+  const handleAddComment = useCallback(async (auftragId: string, comment: Omit<Comment, 'id' | 'createdAt'>) => {
     try {
-      const { rows } = await sql`
-        INSERT INTO comments (auftrag_id, author, text, created_at)
-        VALUES (${auftragId}, ${comment.author}, ${comment.text}, ${new Date().toISOString()})
-        RETURNING *
-      `
-      const newComment = {
-        ...rows[0],
-        createdAt: new Date(rows[0].created_at)
-      } as Comment
+      const response = await fetch(`/api/auftraege/${auftragId}/comments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(comment),
+      })
+      const updatedAuftrag = await response.json()
       setAuftraege(prevAuftraege => 
         prevAuftraege.map(auftrag => 
-          auftrag.id === auftragId
-            ? {
-                ...auftrag,
-                comments: [
-                  ...auftrag.comments,
-                  newComment
-                ]
-              }
-            : auftrag
+          auftrag._id === updatedAuftrag._id ? updatedAuftrag : auftrag
         )
       )
     } catch (error) {
@@ -498,19 +431,23 @@ const Auftragsverwaltung: React.FC = () => {
     }
   }, [])
 
-  const handleSetTermin = useCallback(async (auftragId: number, termin: Date | undefined) => {
+  const handleSetTermin = useCallback(async (auftragId: string, termin: Date | undefined) => {
     try {
-      const terminString = termin ? termin.toISOString() : null;
-      await sql`UPDATE auftraege SET termin = ${terminString} WHERE id = ${auftragId}`
+      const response = await fetch(`/api/auftraege/${auftragId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ termin }),
+      })
+      const updatedAuftrag = await response.json()
       setAuftraege(prevAuftraege => 
         prevAuftraege.map(auftrag => 
-          auftrag.id === auftragId
-            ? { ...auftrag, termin }
-            : auftrag
+          auftrag._id === updatedAuftrag._id ? updatedAuftrag : auftrag
         )
       )
-      if (angesehenerAuftrag && angesehenerAuftrag.id === auftragId) {
-        setAngesehenerAuftrag({ ...angesehenerAuftrag, termin })
+      if (angesehenerAuftrag && angesehenerAuftrag._id === auftragId) {
+        setAngesehenerAuftrag(updatedAuftrag)
       }
     } catch (error) {
       console.error('Fehler beim Setzen des Termins:', error)
@@ -554,7 +491,7 @@ const Auftragsverwaltung: React.FC = () => {
   const calendarEvents = auftraege
     .filter(auftrag => auftrag.termin)
     .map(auftrag => ({
-      id: auftrag.id,
+      id: auftrag._id,
       title: `Auftrag${auftrag.nummer}: ${formatTime(auftrag.termin!)}`,
       start: new Date(auftrag.termin!),
       end: new Date(auftrag.termin!),
@@ -566,14 +503,6 @@ const Auftragsverwaltung: React.FC = () => {
       <div className="p-4 max-w-full overflow-x-hidden">
         <div className="mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center">
           <div className="flex items-center mb-2 sm:mb-0">
-            <Image
-              src="/placeholder.svg"
-              alt="Dimbau Logo"
-              width={50}
-              height={50}
-              className="mr-2"
-            />
-            <h1 className="text-2xl font-bold">Auftragsverwaltung</h1>
           </div>
           <div className="flex space-x-2">
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
